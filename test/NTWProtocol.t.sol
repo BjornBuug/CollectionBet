@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.20;
 
+// git rm -r *
 
 import "forge-std/Test.sol";
 import "forge-std/console2.sol";
 
 
 
-
-contract UpgradeableStakingTest is Test {
+contract NFTTugOfWar is Test {
 
 
 

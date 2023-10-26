@@ -40,4 +40,23 @@ contract NTWProtocol is EIP712("NFTugOfWar", "1"), Ownable, ReentrancyGuard {
         bool isBull;
     }
 
+
+    uint256 public fee;
+
+
+    /**
+     * @notice Order type hash based on EIP712
+     * @dev ORDER_TYPE_HASH ensure that any data being signed match this specific data structure
+     */
+    bytes32 public constant ORDER_TYPE_HASH = 
+    keccak256("Order(uint256 bearDeposit, uint256 bullCollateral, uint256 validity, uint256 expiry, uint256 nonce, uint16 fee, address maker, address paymentAsset, address collection, bool isBull)"
+    );
+
+
+    constructor(uint256 _fee, address _weth) {
+
+    }
+
+
+
 }
