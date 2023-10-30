@@ -3,6 +3,7 @@ src = 'src'
 out = 'out'
 libs = ['lib']
 solc_version = "0.8.20"
+viaIR = true
 remappings = ['@openzeppelin/=lib/openzeppelin-contracts/']
 
 rpc_endpoints = { mainnet = "https://mainnet.infura.io/v3/", optimism = "https://rpc.ankr.com/optimism" , fantom = "https://rpc.ankr.com/fantom", arbitrum = "https://rpc.ankr.com/arbitrum" , bsc = "https://divine-black-wind.bsc.discover.quiknode.pro/64ab050694137dfcbf4c20daec2e94dc515c1d60/" }
