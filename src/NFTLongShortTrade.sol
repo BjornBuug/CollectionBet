@@ -2,20 +2,21 @@
 pragma solidity 0.8.20;
 
 import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+import {IERC721} from "openzeppelin-contracts/contracts/token/ERC721/IERC721.sol";
 import {Ownable} from "openzeppelin-contracts/contracts/access/Ownable.sol";
 import {ReentrancyGuard} from "openzeppelin-contracts/contracts/security/ReentrancyGuard.sol";
 import {SafeERC20} from "openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ECDSA} from "openzeppelin-contracts/contracts/utils/cryptography/ECDSA.sol";
 import {EIP712} from "openzeppelin-contracts/contracts/utils/cryptography/draft-EIP712.sol";
+import {IERC721Receiver} from "openzeppelin-contracts/contracts/token/ERC721/IERC721Receiver.sol";
 
 import {WETH} from "solmate/src/tokens/WETH.sol";
 
 
 
-contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, ReentrancyGuard {
+contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, ReentrancyGuard, IERC721Receiver {
     
     using SafeERC20 for IERC20;
-
 
     //***************************** EVENT ************/
     event MatchedOrder(bytes32 hashedOrder, address indexed seller, address indexed buyer, Order order);
@@ -78,6 +79,12 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
 
     /// @notice To keep track of all matched order
     mapping (uint256 => Order) public matchedOrders;
+
+    /// @notice Keep track of settled contracts
+    mapping (uint256 => bool) public setteledContracts;
+
+    /// @notice Keep track of the NFTs the contract holds
+    mapping (uint256 => uint256) public claimableTokenId;
 
     // @notice the addresses of an allowed NFT collection 
     mapping (address => bool) public allowedCollection;
@@ -214,8 +221,53 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
         
          // function returns the hash of the fully encoded EIP712 message for this domain
         return _hashTypedDataV4(hashedOrder);
-    }   
+    }  
 
+
+    /** 
+      * @notice The NFT seller to settle the contract 
+      * @param order the struct order to hash
+      * @return tokenId The id of the NFT
+    */
+
+    /** Function def: This function would allow the seller of the NFT to settle the contract with the buyer before the expiry of the contract
+        Funds transfer: by 1- Send the NFT to the address(this) contract (which would be withdrawble by the Buyer) 
+        and secondly transfer the order.sellerDeposit,  order.buyerCollateral to the the the seller.
+        State changes: Check if the contract is already settled. Save the NFT into mapping to keep track of the all the NFT hold by the contract
+        Sanity checkes: 
+        Event Emits: 
+
+                    
+    */
+    function settleContract(Order memory order, uint256 tokenId) public nonReentrant {
+            bytes32 hashedOrder = hashOrder(order);
+
+            // Get the contract id by using the above hash
+            uint256 contractId = uint256(hashedOrder);
+
+            // Retrieve the order related to contractId
+            matchedOrders[contractId] = order;
+
+            // Get the seller
+            address seller = sellers[contractId];
+
+            require(!setteledContracts[contractId], "CONTRACT_ALREADY_SETTELED");
+
+            require(block.timestamp <= order.expiry, "CONTRACT_EXPIRED");
+
+            require(seller == msg.sender, "UNAUTHORIZED_SELLER");
+
+            setteledContracts[contractId] = true;
+
+            claimableTokenId[contractId] = tokenId;
+
+            // Send an NFT from seller to the contract to this address(this)
+            IERC721(order.collection).safeTransferFrom(seller, address(this), tokenId, data);
+
+            uint256 sellerPayment = order.sellerDeposit + order.buyerCollateral;
+
+            IERC20(order.paymentAsset).safeTransfe(seller, sellerPayment);
+    }
 
     /**
      * @notice Sets new fee rate only by the owner
@@ -293,6 +345,16 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
         // ECDSA.recover returns an Ethereum Signed Message created from a hash
           return ECDSA.recover(_orderHash, _signature) == _signer;
     }
+
+
+    // // 
+    // function onERC721Received(
+    //     address operator, 
+    //     address from, 
+    //     uint256 tokenId, 
+    //     bytes calldata data) external override returns (bytes4) {      
+    //     return IERC721Receiver.onERC721Received.selector;
+    // } 
 
 
 
