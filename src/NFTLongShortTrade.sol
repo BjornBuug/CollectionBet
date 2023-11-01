@@ -23,6 +23,7 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
     event AllowCollection(address collection, bool allowed);
     event AllowTokens(address token, bool allowed);
     event UpdateFee(uint16 fee);
+    event ContractSetteled(Order indexed order, bytes hashOrder, uint tokenId);
 
 
     //***************************** ERROR ************/
@@ -86,11 +87,15 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
     /// @notice Keep track of the NFTs the contract holds
     mapping (uint256 => uint256) public claimableTokenId;
 
+    /// @notice Keep track of the reclaimed NFT from the seller
+    mapping (uint256 => bool) public reclaimedNFT;
+
     // @notice the addresses of an allowed NFT collection 
     mapping (address => bool) public allowedCollection;
 
     // @notice the addresses of an allowed ERC20 tokens
     mapping (address => bool) public allowedTokens;
+
     
 
     /**
@@ -224,22 +229,15 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
     }  
 
 
+
     /** 
-      * @notice The NFT seller to settle the contract 
-      * @param order the struct order to hash
-      * @return tokenId The id of the NFT
+      * @notice Allows the seller to settle their contract with the buyer 
+      * @param order The order related to the contract
+      * @return tokenId The id of the NFT to settle the contract
     */
 
-    /** Function def: This function would allow the seller of the NFT to settle the contract with the buyer before the expiry of the contract
-        Funds transfer: by 1- Send the NFT to the address(this) contract (which would be withdrawble by the Buyer) 
-        and secondly transfer the order.sellerDeposit,  order.buyerCollateral to the the the seller.
-        State changes: Check if the contract is already settled. Save the NFT into mapping to keep track of the all the NFT hold by the contract
-        Sanity checkes: 
-        Event Emits: 
-
-                    
-    */
     function settleContract(Order memory order, uint256 tokenId) public nonReentrant {
+            
             bytes32 hashedOrder = hashOrder(order);
 
             // Get the contract id by using the above hash
@@ -266,8 +264,54 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
 
             uint256 sellerPayment = order.sellerDeposit + order.buyerCollateral;
 
-            IERC20(order.paymentAsset).safeTransfe(seller, sellerPayment);
+            IERC20(order.paymentAsset).safeTransfer(seller, sellerPayment);
+
+            emit contractSetteled(order, hashedOrder, tokenId);
     }
+
+
+    /**
+        Function def: Allow the buyer to claim their NFT
+        Sanity checkes: IF the caller is the buyer of the NFT in the order // If the contract is not already setteled // [x]
+                        to check if the contract is expired to send the money back to the seller.
+        State changes: reclaimedNFT [x]
+        Funds transfer: Transfer the nft to the seller if the contract is settled by the buyer
+        Event Emits: 
+        NatSpec: 
+
+     */
+
+    function claimNFT(Order memory order) external {
+
+        bytes32 hashedOrder = hashOrder(order);
+
+        uint256 contractId = uint(hashedOrder);
+
+        matchedOrders[contractId] = order;
+
+        uint256 buyer = buyers[contractId];
+
+        require(buyer == msg.sender, "UNAUTHORIZED_BUYER");
+
+        require(!reclaimedNFT[contractId], "ALREADY_RECLAIMED");
+
+        reclaimedNFT[contractId] = true;
+
+        // Check if the contract is setteled if so we transfer the asset to the buyer 
+        if(setteledContracts[contractId]) {
+            uint256 tokenId = claimableTokenId[contractId];
+            IERC721(order.collection).safeTransferFrom(address(this), buyer , tokenId);
+        } else {
+        // Check if the contract is expired, if it's means that the seller didn't setlle the contract within the validity time
+        // Then we send both the collateral and deposit to the seller.
+            require(block.timestamp > order.expiry, "CONTRACT_NOT_EXPIRED");
+            uint256 buyerRefund = order.buyerCollateral + order.sellerDeposit;
+            IERC20(order.paymentAsset).safeTransfer(buyer, buyerRefund);
+        }
+
+    }
+
+
 
     /**
      * @notice Sets new fee rate only by the owner
@@ -280,6 +324,7 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
     }
 
     
+
     /**
         * @notice Verify if an order is valid 
         * @param order the order to verify
@@ -312,6 +357,8 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
 
     }
 
+
+
     /**
         * @notice Set an NFT collection by the owner
         * @param _collection The address of the NFT collection
@@ -334,6 +381,7 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
     }
 
     
+
     /**
         * @notice Verify if the signature of an order hash was made by `_signer`
         * @param _signer The address of the signer
