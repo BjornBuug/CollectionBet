@@ -13,6 +13,17 @@ import {IERC721Receiver} from "openzeppelin-contracts/contracts/token/ERC721/IER
 import {WETH} from "solmate/src/tokens/WETH.sol";
 
 
+/**
+        Function def: 
+        Sanity checkes: 
+        State changes: 
+        Funds transfer: 
+        Event Emits: 
+        NatSpec:
+    */
+
+
+
 
 contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, ReentrancyGuard, IERC721Receiver {
     
@@ -24,6 +35,8 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
     event AllowTokens(address token, bool allowed);
     event UpdateFee(uint16 fee);
     event ContractSetteled(Order indexed order, bytes hashOrder, uint tokenId);
+    event ClaimedNFT(bytes32 hashOrder, Order order);
+    event ClosedSellOrder(bytes32 sellOrderHash, SellOrder sellOrder, bytes32 hashedOrder, Order order , address indexed buyer);
 
 
     //***************************** ERROR ************/
@@ -55,6 +68,33 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
         bool isBull;
     }
 
+
+          // TODO Fix the NatSpec
+     /**
+        * @notice Details of a sell Order
+        * @param orderHash The hashed of the order/contract
+        * @param price The minimum amount to buy the position
+        * @param start Timestamp when the sell order can be used
+        * @param end Timestamp when the sell order cannnot be used
+        * @param nonce Number used to verify the sell order's validity and prevent order reuse or duplication.
+        * @param paymentAsset Address of the ERC20 asset used to pay the buy the order.
+        * @param maker Address of the user creating the sell order.
+        * @param whitelist The allowed addresses to buy a sell order, if it empty then anyone 
+        * @param isBull Boolean indicating whether the maker is a The "Buyer" or "Seller";
+    */
+    struct SellOrder {
+        bytes32 orderHash; 
+        uint256 price; 
+        uint256 start; 
+        uint256 end; 
+        uint256 nonce; 
+        address paymentAsset; 
+        address maker;
+        address[] whitelist; 
+        bool isBull; 
+    }
+
+
     uint256 public fee;
 
 
@@ -65,6 +105,15 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
     bytes32 public constant ORDER_TYPE_HASH = 
             keccak256("Order(uint256 sellerDeposit, uint256 buyerCollateral, uint256 validity, uint256 expiry, uint256 nonce, uint16 fee, address maker, address paymentAsset, address collection, bool isBull)"
     );
+
+
+    /**
+     * @notice Sell Order type hash based on EIP712
+     * @dev SELL_ORDER_TYPE_HASH ensure that any data being signed match this specific data structure
+    */
+    bytes32 public constant SELL_ORDER_TYPES_HASH = 
+    keccak256("SellOrder(bytes32 orderHash, uint256 price, uint256 start, uint256 end, uint256 nonce, address paymentAsset, address maker, address[] whitelist, bool isBull)");
+
 
     /// @notice the amount of fee withdrawble by the owner
     mapping (address => uint256) public withdrawableFees;
@@ -120,6 +169,8 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
     // 10- Add Functions events 
 
 
+
+    // verifyIsValidOrder(Order memory order, bytes32 _orderHash , bytes calldata _signature)
     /**
      * @notice Match the order with the maker
      * @param order the order created by the maker
@@ -127,9 +178,11 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
      * @return contractId returns the contract id
     */
     function matchOrder(Order calldata order, bytes calldata _signature) external payable nonReentrant returns(uint256) {
+            
+            // Hash and return the struct order acording to EIP712 for the signer address to sign with their private keys.
             bytes32 hashedOrder = hashOrder(order);
 
-            isValidOrder(order, hashedOrder, _signature);
+            verifyIsValidOrder(order, hashedOrder, _signature);
     
             // contractID to saves buyers and seller to mapping after orderMatch
             uint256 contractId = uint256(hashedOrder);
@@ -160,6 +213,7 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
                 takerPrice = order.sellerDeposit + sellerFees;
 
             } else {
+
                 buyer = msg.sender;
                 seller = order.maker;
 
@@ -187,8 +241,8 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
             // Retrieve payment from the taker
             uint256 takerTokensBalance = IERC20(tokenPayment).balanceOf(msg.sender);
 
-            if (takerPrice >= msg.value) {
-                require(tokenPayment == weth, "Invalid payment asset");
+            if (takerPrice == msg.value) {
+                require(tokenPayment == weth, "INCOMPATIBLE_PAYMENT_ASSET");
                 WETH(weth).deposit{value : msg.value}();
             } else if(takerPrice > 0 && takerTokensBalance >= takerPrice) {
                 IERC20(tokenPayment).safeTransferFrom(msg.sender, address(this), takerPrice);
@@ -198,36 +252,6 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
 
         return contractId;
     }
-
-
-    /** 
-      * @notice Hashed the order according to EIP712  
-      * @param order the struct order to hash
-      * @return hashedOrder EIP721 hash of the order
-    */  
-    function hashOrder(Order calldata order) public view returns(bytes32) {
-         // abi.encode package all the input data with different types(string, uint) into bytes format then
-        // hashing using keccak256 to get a unique hash
-        bytes32 hashedOrder = keccak256(
-                abi.encode(
-                    ORDER_TYPE_HASH,
-                    order.sellerDeposit,
-                    order.buyerCollateral,
-                    order.validity,
-                    order.expiry,
-                    order.nonce,
-                    order.fee,
-                    order.maker,
-                    order.paymentAsset,
-                    order.collection,
-                    order.isBull
-                )
-            );
-        
-         // function returns the hash of the fully encoded EIP712 message for this domain
-        return _hashTypedDataV4(hashedOrder);
-    }  
-
 
 
     /** 
@@ -259,7 +283,7 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
 
             claimableTokenId[contractId] = tokenId;
 
-            // Send an NFT from seller to the contract to this address(this)
+            // Send an NFT from seller to the contract address(this)
             IERC721(order.collection).safeTransferFrom(seller, address(this), tokenId, data);
 
             uint256 sellerPayment = order.sellerDeposit + order.buyerCollateral;
@@ -270,18 +294,12 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
     }
 
 
+    
     /**
-        Function def: Allow the buyer to claim their NFT
-        Sanity checkes: IF the caller is the buyer of the NFT in the order // If the contract is not already setteled // [x]
-                        to check if the contract is expired to send the money back to the seller.
-        State changes: reclaimedNFT [x]
-        Funds transfer: Transfer the nft to the seller if the contract is settled by the buyer
-        Event Emits: 
-        NatSpec: 
-
-     */
-
-    function claimNFT(Order memory order) external {
+      * @notice Allows the buyer of the NFT to either claim their NFT or, if the contract time has expired, both the seller's deposit and their own deposit.
+      * @param order The identifier of the order related to the NFT contract
+    */
+    function claimNFT(Order memory order) public nonReentrant {
 
         bytes32 hashedOrder = hashOrder(order);
 
@@ -300,17 +318,160 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
         // Check if the contract is setteled if so we transfer the asset to the buyer 
         if(setteledContracts[contractId]) {
             uint256 tokenId = claimableTokenId[contractId];
+
+            //Transfer the NFT from address(this) to the buyer
             IERC721(order.collection).safeTransferFrom(address(this), buyer , tokenId);
         } else {
+
         // Check if the contract is expired, if it's means that the seller didn't setlle the contract within the validity time
         // Then we send both the collateral and deposit to the seller.
+
             require(block.timestamp > order.expiry, "CONTRACT_NOT_EXPIRED");
             uint256 buyerRefund = order.buyerCollateral + order.sellerDeposit;
             IERC20(order.paymentAsset).safeTransfer(buyer, buyerRefund);
         }
 
+        emit ClaimedNFT(hashedOrder, order);
     }
 
+
+    /**
+        Function def: Buy Position: Any one can create an off-chain sellorder to sell their position in the contract 
+        Function params: 
+        Sanity checks:  
+        State changes: 
+        Funds transfer: 
+        Event Emits: 
+        NatSpec:
+    */
+
+    function buyPosition(SellOrder calldata sellOrder, bytes32 _signature, uint256 tipAmount) public nonReentrant returns(uint256) {
+        
+        require(tipAmount >= 0, "TIP_CANNOT_BE_ZERO");
+
+        // Get  the order hash that a Bull or bear want to sell to get the contractId to retrieve data associeted with the order.
+        bytes32 orderHash = SellOrder.orderHash;
+
+        // Hash the Sell Order
+        bytes32 sellOrderHash = hashSellOrder(sellOrder);
+
+        // Create Ids from the above hashes
+        uint256 contractId = uint256(orderHash);
+
+        uint256 sellOrderId = uint256(sellOrderHash);
+
+        Order memory order = matchedOrders[contractId];
+
+
+        // TODO create verifyIsvalidOrder + isWhiteListed
+        // verifyIsValidSellOrder(SellOrder, sellOrderHash, Order, order, _signature); // Create later
+
+        // Check if the whitelist is empty then pass, other check if the msg.sender's address is in the whitelist
+        require(sellOrder.whitelist.length == 0 || isWhiteListed(sellOrder.whitelist, msg.sender), "CALLER_NOT_WHITELISTED");
+
+        // Add the buyer's address 
+        if(sellOrder.isBull) {
+            buyers[contractId] =  msg.sender;
+        } else {
+            sellers[contractId] =  msg.sender;
+        }
+
+
+        // Save the sell order
+        confirmedSellOrder[sellOrderId] = sellOrder;
+
+        // Transfer asset to the Sell Order maker
+        address sellOrderMaker = sellOrder.maker;
+        address paymentAsset = sellOrder.paymentAsset;
+        uint256 buyerPrice = sellOrder.price + tipAmount;
+        uint256 buyerBalance = IERC20(paymentAsset).balanceOf(msg.sender);
+
+        if(msg.value == buyerPrice) {
+
+            require(paymentAsset == weth, "INCOMPATIBLE_PAYMENT_ASSET");
+            WETH(weth).deposit{value: msg.value}();
+            IERC20(weth).safeTranfer(sellOrderMaker, msg.value);
+
+        } else if (buyerBalance >= buyerPrice) {
+            IERC20(paymentAsset).safeTransferFrom(msg.sender, sellOrderMaker, buyerPrice);
+        } else { revert ERR_NOT_ENOUGH_BALANCE(); }
+
+        return sellOrderId;
+
+        emit ClosedSellOrder(sellOrderHash, sellOrder, orderHash, order, msg.sender);
+    }   
+
+
+    // TODO: NATSPEC
+    function isWhiteListed(address[] memory whiteList, address buyer) public pure returns (bool) {
+            for(uint256 i; i < whiteList.length; i++) {
+                if(whiteList[i] == buyer) {
+                    return true;
+                }
+            }
+        return false;
+    }
+
+
+    /** 
+      * @notice Hashed the order according to EIP712(data hashing and signing)
+      * @param order the struct order to hash
+      * @return hashedOrder EIP721 hash of the order
+    */  
+    function hashOrder(Order calldata order) public view returns(bytes32) {
+        // abi.encode package all the input data with different types(string, uint) into bytes format then
+        // hashing using keccak256 to get a unique hash
+        bytes32 hashedOrder = keccak256(
+                abi.encode(
+                    ORDER_TYPE_HASH,
+                    order.sellerDeposit,
+                    order.buyerCollateral,
+                    order.validity,
+                    order.expiry,
+                    order.nonce,
+                    order.fee,
+                    order.maker,
+                    order.paymentAsset,
+                    order.collection,
+                    order.isBull
+                )
+            );
+        
+        // function returns the hash of the fully encoded EIP712 message for this domain
+        return _hashTypedDataV4(hashedOrder);
+    }
+
+
+
+    /** 
+      * @notice Hashed the sell order according to EIP712(data hashing and signing)
+      * @param order the struct SellOrder to hash
+      * @return hashedOrder EIP712 hash of the order
+    */  
+    function hashSellOrder(SellOrder calldata sellOrder) public view returns(bytes32) {
+        // abi.encode package all the input data with different types(string, uint) into bytes format then
+        // hashing using keccak256 to get a unique hash
+        bytes32 hashedSellOrder = keccak256(
+                abi.encode(
+                    SELL_ORDER_TYPES_HASH,
+                    sellOrder.orderHash,
+                    sellOrder.price,
+                    sellOrder.start,
+                    sellOrder.end,
+                    sellOrder.nonce,
+                    sellOrder.paymentAsset,
+                    sellOrder.maker,
+                    keccak256(abi.encodePacked(sellOrder.whitelist)),
+                    sellOrder.isBull
+                )
+            );
+        
+        // function returns the hash of the fully encoded EIP712 message for this domain
+        return _hashTypedDataV4(hashedSellOrder);
+    }
+
+
+    
 
 
     /**
@@ -330,7 +491,7 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
         * @param order the order to verify
         * @param _signature The signature corresponding to the EIP712 hashed order
     */
-    function isValidOrder(Order memory order, bytes32 _orderHash , bytes calldata _signature) public view {
+    function verifyIsValidOrder(Order memory order, bytes32 _orderHash , bytes calldata _signature) public view {
         
         // Verify if the signature of a hashed order was made my the maker
         require(isValidSignature(order.maker, _orderHash, _signature), "INVALID_SIGNATURE");
