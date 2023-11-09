@@ -36,7 +36,7 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
     event UpdateFee(uint16 fee);
     event ContractSetteled(Order indexed order, bytes hashOrder, uint tokenId);
     event ClaimedNFT(bytes32 hashOrder, Order order);
-    event ClosedSellOrder(bytes32 sellOrderHash, SellOrder sellOrder, bytes32 hashedOrder, Order order , address indexed buyer);
+    event ClosedPosition(bytes32 sellOrderHash, SellOrder sellOrder, bytes32 hashedOrder, Order order , address indexed buyer);
 
 
     //***************************** ERROR ************/
@@ -130,6 +130,9 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
     /// @notice To keep track of all matched order
     mapping (uint256 => Order) public matchedOrders;
 
+    /// @notice Keep track of sold sell order.
+    mapping (bytes32 => SellOrder) public confirmedSellOrder;
+
     /// @notice Keep track of settled contracts
     mapping (uint256 => bool) public setteledContracts;
 
@@ -146,6 +149,7 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
     mapping (address => bool) public allowedTokens;
 
     
+
 
     /**
      * @param _fee The initial Fee rate
@@ -170,7 +174,7 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
 
 
 
-    // verifyIsValidOrder(Order memory order, bytes32 _orderHash , bytes calldata _signature)
+    // isValidOrder(Order memory order, bytes32 _orderHash , bytes calldata _signature)
     /**
      * @notice Match the order with the maker
      * @param order the order created by the maker
@@ -182,7 +186,7 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
             // Hash and return the struct order acording to EIP712 for the signer address to sign with their private keys.
             bytes32 hashedOrder = hashOrder(order);
 
-            verifyIsValidOrder(order, hashedOrder, _signature);
+            isValidOrder(order, hashedOrder, _signature);
     
             // contractID to saves buyers and seller to mapping after orderMatch
             uint256 contractId = uint256(hashedOrder);
@@ -254,12 +258,12 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
     }
 
 
+
     /** 
       * @notice Allows the seller to settle their contract with the buyer 
       * @param order The order related to the contract
       * @return tokenId The id of the NFT to settle the contract
     */
-
     function settleContract(Order memory order, uint256 tokenId) public nonReentrant {
             
             bytes32 hashedOrder = hashOrder(order);
@@ -343,9 +347,17 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
         Funds transfer: 
         Event Emits: 
         NatSpec:
-    */
+    */  
 
-    function buyPosition(SellOrder calldata sellOrder, bytes32 _signature, uint256 tipAmount) public nonReentrant returns(uint256) {
+    
+    /**
+      * @notice Executes the purchase of a specified sell order position.
+      * @param sellOrder The struct representing the sell order being purchased.
+      * @param signature The digital signature of the sell order, verifying the caller's intent.
+      * @param tipAmount The additional amount offered by the buyer, over the sell order price.
+      * @return sellOrderId The unique identifier of the successfully purchased sell order.
+    */
+    function buyPosition(SellOrder calldata sellOrder, bytes32 signature, uint256 tipAmount) public nonReentrant returns(uint256) {
         
         require(tipAmount >= 0, "TIP_CANNOT_BE_ZERO");
 
@@ -362,23 +374,20 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
 
         Order memory order = matchedOrders[contractId];
 
-
-        // TODO create verifyIsvalidOrder + isWhiteListed
-        // verifyIsValidSellOrder(SellOrder, sellOrderHash, Order, order, _signature); // Create later
+        isValidSellOrder(SellOrder, sellOrderHash, Order, order, signature);
 
         // Check if the whitelist is empty then pass, other check if the msg.sender's address is in the whitelist
         require(sellOrder.whitelist.length == 0 || isWhiteListed(sellOrder.whitelist, msg.sender), "CALLER_NOT_WHITELISTED");
 
         // Add the buyer's address 
         if(sellOrder.isBull) {
-            buyers[contractId] =  msg.sender;
+            buyers[contractId] = msg.sender;
         } else {
-            sellers[contractId] =  msg.sender;
+            sellers[contractId] = msg.sender;
         }
 
-
         // Save the sell order
-        confirmedSellOrder[sellOrderId] = sellOrder;
+        confirmedSellOrder[sellOrderHash] = sellOrder;
 
         // Transfer asset to the Sell Order maker
         address sellOrderMaker = sellOrder.maker;
@@ -386,8 +395,8 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
         uint256 buyerPrice = sellOrder.price + tipAmount;
         uint256 buyerBalance = IERC20(paymentAsset).balanceOf(msg.sender);
 
-        if(msg.value == buyerPrice) {
-
+        if(msg.value > 0) {
+            require(msg.value == buyerPrice, "Not enough funds");
             require(paymentAsset == weth, "INCOMPATIBLE_PAYMENT_ASSET");
             WETH(weth).deposit{value: msg.value}();
             IERC20(weth).safeTranfer(sellOrderMaker, msg.value);
@@ -398,11 +407,58 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
 
         return sellOrderId;
 
-        emit ClosedSellOrder(sellOrderHash, sellOrder, orderHash, order, msg.sender);
-    }   
+        emit ClosedPosition(sellOrderHash, sellOrder, orderHash, order, msg.sender);
+    } 
+
+    
+    /**
+        * @notice Verifies the validity of a sell order against its hash and signature.
+        * @param sellOrder sellOrder The sell order struct to be verified.
+        * @param sellOrderHash The keccak256 hash of the sell order details.
+        * @param order The matched order associated with the sell order.
+        * @param orderHash The keccak256 hash of the matched order details.
+        * @param signature The digital signature proving the sell order's authenticity.
+    */
+    function isValidSellOrder(SellOrder calldata sellOrder, sellOrderHash, Order calldata order, orderHash, signature) public view {
+        require(isValidSignature(sellOrder.maker, sellOrderHash, signature), "INVALID_SIGNATURE");
+
+        uint256 contractId = uint256(orderHash);
+
+        if(sellOrder.isBull) {
+
+            require(sellOrder.maker == buyers[contractId], "CALLER_IS_NOT_A_BUYER");
+            require(!reclaimedNFT[contractId], "ALREADY_RECLAIMED");
+
+        } else {
+            require(sellOrder.maker == sellers[contractId], "CALLER_IS_NOT_A_SELLER");
+            require(block.timestamp < order.expiry, "CONTRACT_EXPIRED");
+        }
+
+        // Check if the sell order has already a maker => wasn't sold
+        require(confirmedSellOrder[sellOrderHash].maker == address(0), "ORDER_ALREADY_SOLD");
+
+        require(block.timestamp >= sellOrder.start, "SELL_ORDER_DIDN'T_START");
+
+        require(block.timestamp < sellOrder.end, "SELL_ORDER_EXPIRED");
+
+        require(!setteledContracts[contractId], "CONTRACT_ALREADY_SETTELED");
+
+        // Verify if the the payment asset are valid
+        require(allowedTokens[sellOrder.paymentAsset], "INVALID_PAYMENTASSET");
+
+        // Add Nonce later
+
+        // add If the order is canceled or not 
+    }
 
 
-    // TODO: NATSPEC
+
+    /**
+      * @notice Verifies if the provided buyer's address is included in the whitelist.
+      * @param whiteList An array of addresses deemed eligible to buy.
+      * @param buyer The address of the potential buyer to check against the whitelist.
+      * @return bool True if the buyer is whitelisted, false otherwise.
+    */
     function isWhiteListed(address[] memory whiteList, address buyer) public pure returns (bool) {
             for(uint256 i; i < whiteList.length; i++) {
                 if(whiteList[i] == buyer) {
@@ -471,8 +527,6 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
     }
 
 
-    
-
 
     /**
      * @notice Sets new fee rate only by the owner
@@ -491,7 +545,7 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
         * @param order the order to verify
         * @param _signature The signature corresponding to the EIP712 hashed order
     */
-    function verifyIsValidOrder(Order memory order, bytes32 _orderHash , bytes calldata _signature) public view {
+    function isValidOrder(Order memory order, bytes32 _orderHash , bytes calldata _signature) public view {
         
         // Verify if the signature of a hashed order was made my the maker
         require(isValidSignature(order.maker, _orderHash, _signature), "INVALID_SIGNATURE");
