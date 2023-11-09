@@ -8,8 +8,8 @@ import {ReentrancyGuard} from "openzeppelin-contracts/contracts/security/Reentra
 import {SafeERC20} from "openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ECDSA} from "openzeppelin-contracts/contracts/utils/cryptography/ECDSA.sol";
 import {EIP712} from "openzeppelin-contracts/contracts/utils/cryptography/draft-EIP712.sol";
-import {IERC721Receiver} from "openzeppelin-contracts/contracts/token/ERC721/IERC721Receiver.sol";
 
+import {ERC721TokenReceiver} from "solmate/src/tokens/ERC721.sol";
 import {WETH} from "solmate/src/tokens/WETH.sol";
 
 
@@ -25,7 +25,7 @@ import {WETH} from "solmate/src/tokens/WETH.sol";
 
 
 
-contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, ReentrancyGuard, IERC721Receiver {
+contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, ReentrancyGuard, ERC721TokenReceiver {
     
     using SafeERC20 for IERC20;
 
@@ -34,9 +34,11 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
     event AllowCollection(address collection, bool allowed);
     event AllowTokens(address token, bool allowed);
     event UpdateFee(uint16 fee);
-    event ContractSetteled(Order indexed order, bytes hashOrder, uint tokenId);
+    event ContractSetteled(Order indexed order, bytes32 hashOrder, uint tokenId);
     event ClaimedNFT(bytes32 hashOrder, Order order);
     event ClosedPosition(bytes32 sellOrderHash, SellOrder sellOrder, bytes32 hashedOrder, Order order , address indexed buyer);
+    event UpdateMinimumValidNonce(address indexed orderMaker, uint256 minimumNonceOrder);
+    event UpdateMinimumValidNonceSell(address indexed orderMaker, uint256 minimumNonceOrderSell);
 
 
     //***************************** ERROR ************/
@@ -114,6 +116,12 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
     bytes32 public constant SELL_ORDER_TYPES_HASH = 
     keccak256("SellOrder(bytes32 orderHash, uint256 price, uint256 start, uint256 end, uint256 nonce, address paymentAsset, address maker, address[] whitelist, bool isBull)");
 
+    
+    /// @notice The address of an sell order maker => to the valid nonce;  
+    mapping (address => uint256) public minimumValidNonceOrderSell;
+
+    /// @notice The address of an order maker => to a valid nonce;
+    mapping(address => uint256) public minimumValidNonceOrder;
 
     /// @notice the amount of fee withdrawble by the owner
     mapping (address => uint256) public withdrawableFees;
@@ -160,21 +168,8 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
         setFee(_fee);
     }
 
-
-    // TODO 1-Create a function matchedorder; [x]
-    // 2-Hash the order by creating hash order function EIP712 [x]
-    // 3- calculate the fee for both sellers and buyers [x]
-    // 4- Deteminte who is the maker of the order and who the taker using is Bull/maker [x]
-    // 5- Calculate the fee for both maker and taker [x]
-    // 6- Storage the value of the buyer and seller in mapping using the contractID/EIP712 hashed order; [x]
-    // 7- Retrieve payment based on the the order.asset [x]
-    // 8- Create struct to keep track of all the matched order. [x]
-    // 9- Check if the signature is valid ??? (Include more conditions to check if the orderisValid); TO BE CONTINUED...
-    // 10- Add Functions events 
-
-
-
-    // isValidOrder(Order memory order, bytes32 _orderHash , bytes calldata _signature)
+    
+    
     /**
      * @notice Match the order with the maker
      * @param order the order created by the maker
@@ -262,9 +257,9 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
     /** 
       * @notice Allows the seller to settle their contract with the buyer 
       * @param order The order related to the contract
-      * @return tokenId The id of the NFT to settle the contract
+      * @param tokenId The id of the NFT to settle the contract
     */
-    function settleContract(Order memory order, uint256 tokenId) public nonReentrant {
+    function settleContract(Order calldata order, uint256 tokenId) public nonReentrant {
             
             bytes32 hashedOrder = hashOrder(order);
 
@@ -288,13 +283,13 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
             claimableTokenId[contractId] = tokenId;
 
             // Send an NFT from seller to the contract address(this)
-            IERC721(order.collection).safeTransferFrom(seller, address(this), tokenId, data);
+            IERC721(order.collection).safeTransferFrom(seller, address(this), tokenId);
 
             uint256 sellerPayment = order.sellerDeposit + order.buyerCollateral;
 
             IERC20(order.paymentAsset).safeTransfer(seller, sellerPayment);
 
-            emit contractSetteled(order, hashedOrder, tokenId);
+            emit ContractSetteled(order, hashedOrder, tokenId);
     }
 
 
@@ -303,7 +298,7 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
       * @notice Allows the buyer of the NFT to either claim their NFT or, if the contract time has expired, both the seller's deposit and their own deposit.
       * @param order The identifier of the order related to the NFT contract
     */
-    function claimNFT(Order memory order) public nonReentrant {
+    function claimNFT(Order calldata order) public nonReentrant {
 
         bytes32 hashedOrder = hashOrder(order);
 
@@ -311,7 +306,7 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
 
         matchedOrders[contractId] = order;
 
-        uint256 buyer = buyers[contractId];
+        address buyer = buyers[contractId];
 
         require(buyer == msg.sender, "UNAUTHORIZED_BUYER");
 
@@ -349,7 +344,7 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
         NatSpec:
     */  
 
-    
+
     /**
       * @notice Executes the purchase of a specified sell order position.
       * @param sellOrder The struct representing the sell order being purchased.
@@ -357,12 +352,12 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
       * @param tipAmount The additional amount offered by the buyer, over the sell order price.
       * @return sellOrderId The unique identifier of the successfully purchased sell order.
     */
-    function buyPosition(SellOrder calldata sellOrder, bytes32 signature, uint256 tipAmount) public nonReentrant returns(uint256) {
+    function buyPosition(SellOrder calldata sellOrder, bytes calldata signature, uint256 tipAmount) public payable nonReentrant returns(uint256) {
         
         require(tipAmount >= 0, "TIP_CANNOT_BE_ZERO");
 
         // Get  the order hash that a Bull or bear want to sell to get the contractId to retrieve data associeted with the order.
-        bytes32 orderHash = SellOrder.orderHash;
+        bytes32 orderHash = sellOrder.orderHash;
 
         // Hash the Sell Order
         bytes32 sellOrderHash = hashSellOrder(sellOrder);
@@ -374,7 +369,7 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
 
         Order memory order = matchedOrders[contractId];
 
-        isValidSellOrder(SellOrder, sellOrderHash, Order, order, signature);
+        isValidSellOrder(sellOrder, sellOrderHash, order, orderHash, signature);
 
         // Check if the whitelist is empty then pass, other check if the msg.sender's address is in the whitelist
         require(sellOrder.whitelist.length == 0 || isWhiteListed(sellOrder.whitelist, msg.sender), "CALLER_NOT_WHITELISTED");
@@ -399,7 +394,7 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
             require(msg.value == buyerPrice, "Not enough funds");
             require(paymentAsset == weth, "INCOMPATIBLE_PAYMENT_ASSET");
             WETH(weth).deposit{value: msg.value}();
-            IERC20(weth).safeTranfer(sellOrderMaker, msg.value);
+            IERC20(weth).safeTransfer(sellOrderMaker, msg.value);
 
         } else if (buyerBalance >= buyerPrice) {
             IERC20(paymentAsset).safeTransferFrom(msg.sender, sellOrderMaker, buyerPrice);
@@ -411,6 +406,7 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
     } 
 
     
+
     /**
         * @notice Verifies the validity of a sell order against its hash and signature.
         * @param sellOrder sellOrder The sell order struct to be verified.
@@ -419,7 +415,8 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
         * @param orderHash The keccak256 hash of the matched order details.
         * @param signature The digital signature proving the sell order's authenticity.
     */
-    function isValidSellOrder(SellOrder calldata sellOrder, sellOrderHash, Order calldata order, orderHash, signature) public view {
+    function isValidSellOrder(SellOrder calldata sellOrder, bytes32 sellOrderHash, Order memory order, bytes32 orderHash, bytes calldata signature) public view {
+        
         require(isValidSignature(sellOrder.maker, sellOrderHash, signature), "INVALID_SIGNATURE");
 
         uint256 contractId = uint256(orderHash);
@@ -430,7 +427,7 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
             require(!reclaimedNFT[contractId], "ALREADY_RECLAIMED");
 
         } else {
-            require(sellOrder.maker == sellers[contractId], "CALLER_IS_NOT_A_SELLER");
+            require(sellOrder.maker == sellers[contractId], "MAKER_NOT_SELLER");
             require(block.timestamp < order.expiry, "CONTRACT_EXPIRED");
         }
 
@@ -446,9 +443,18 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
         // Verify if the the payment asset are valid
         require(allowedTokens[sellOrder.paymentAsset], "INVALID_PAYMENTASSET");
 
-        // Add Nonce later
-
-        // add If the order is canceled or not 
+        // NOTE
+        /// Check that the nonce of the sellOrder is valid
+        // This check ensure that the order being submitted hasn't been invalidated by the maker 
+        // sellOrder.maker setting new minimium valid nonce.
+        require(sellOrder.nonce >= minimumValidNonceOrderSell[sellOrder.maker], "INVALID_NONCE");
+        // 20 >= 10 
+        // *** Creating nonce attached to each transaction ensure that each order is unique and prevent
+        // replays attacks.
+        // *** Here the order creator(msg.sender) is saying that all only the order that has nonce greater than 10
+        // is valid. and the order I created from 1 to 9 are Invalid.
+       
+        // TODO add If the order is canceled or not 
     }
 
 
@@ -501,7 +507,7 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
 
     /** 
       * @notice Hashed the sell order according to EIP712(data hashing and signing)
-      * @param order the struct SellOrder to hash
+      * @param sellOrder the struct SellOrder to hash
       * @return hashedOrder EIP712 hash of the order
     */  
     function hashSellOrder(SellOrder calldata sellOrder) public view returns(bytes32) {
@@ -569,7 +575,43 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
         require(matchedOrders[uint256(_orderHash)].maker == address(0), "ORDER_ALREADY_MATCHED");
 
         // Add more conditions to check the order is valid
+        require(order.nonce >= minimumValidNonceOrder[order.maker], "INVALID_NONCE");
 
+
+
+    }
+
+
+
+    /**
+        * @notice Set Minimum nonce for an order sell by an order sell maker
+        * @param _minimumValidNonceOrderSell minimum nonce set by the order sell maker
+    */
+    function setMinimumValidNonceOrderSell(uint256 _minimumValidNonceOrderSell) external {
+        
+        // Create a mapping address => nonce to keep track of each Order.maker setting invalid orders
+        require(_minimumValidNonceOrderSell > minimumValidNonceOrderSell[msg.sender], "NONCE_TO_LOW");
+
+        minimumValidNonceOrderSell[msg.sender] = _minimumValidNonceOrderSell;
+
+        emit UpdateMinimumValidNonceSell(msg.sender, _minimumValidNonceOrderSell);
+    }
+
+
+
+
+    /**
+        * @notice Set Minimum nonce for an order by an order maker
+        * @param _minimumValidNonceOrder minimum order set by the order maker
+    */
+    function setMinimumValidNonce(uint256 _minimumValidNonceOrder) external {
+        
+        // Create a mapping address => nonce to keep track of each Order.maker setting invalid orders
+        require(_minimumValidNonceOrder > minimumValidNonceOrder[msg.sender], "NONCE_TO_LOW");
+
+        minimumValidNonceOrder[msg.sender] = _minimumValidNonceOrder;
+
+        emit UpdateMinimumValidNonce(msg.sender, _minimumValidNonceOrder);
     }
 
 
@@ -609,16 +651,7 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
           return ECDSA.recover(_orderHash, _signature) == _signer;
     }
 
-
-    // // 
-    // function onERC721Received(
-    //     address operator, 
-    //     address from, 
-    //     uint256 tokenId, 
-    //     bytes calldata data) external override returns (bytes4) {      
-    //     return IERC721Receiver.onERC721Received.selector;
-    // } 
-
+    
 
 
 }
