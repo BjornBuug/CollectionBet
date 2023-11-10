@@ -14,7 +14,8 @@ import {WETH} from "solmate/src/tokens/WETH.sol";
 
 
 /**
-        Function def: 
+        Function definition: 
+        Function params: 
         Sanity checkes: 
         State changes: 
         Funds transfer: 
@@ -41,6 +42,7 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
     event UpdateMinimumValidNonceSell(address indexed orderMaker, uint256 minimumNonceOrderSell);
     event PositionTransferred(bytes32 hashedOrder, address recipient);
     event OrderCanceled(Order order, bytes32 hashedOrder);
+    event SellOrderCanceled(SellOrder sellOrder, bytes32 hashedSellOrder);
 
     //***************************** ERROR ************/
     error ERR_NOT_ENOUGH_BALANCE();
@@ -164,8 +166,6 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
     mapping (address => bool) public allowedTokens;
 
     
-
-
     /**
      * @param _fee The initial Fee rate
      * @param _weth The address of WETH contract
@@ -175,20 +175,20 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
         setFee(_fee);
     }
 
-    
-    
+
+
     /**
      * @notice Match the order with the maker
      * @param order the order created by the maker
-     * @param _signature the hashed _signature of the order
+     * @param signature the hashed signature of the order
      * @return contractId returns the contract id
     */
-    function matchOrder(Order calldata order, bytes calldata _signature) external payable nonReentrant returns(uint256) {
+    function matchOrder(Order calldata order, bytes calldata signature) public payable nonReentrant returns(uint256) {
             
             // Hash and return the struct order acording to EIP712 for the signer address to sign with their private keys.
             bytes32 hashedOrder = hashOrder(order);
 
-            isValidOrder(order, hashedOrder, _signature);
+            isValidOrder(order, hashedOrder, signature);
     
             // contractID to saves buyers and seller to mapping after orderMatch
             uint256 contractId = uint256(hashedOrder);
@@ -260,11 +260,35 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
     }
 
 
+    /**
+     * @notice Allow users to batch multiple orders
+     * @param orders Orders to be batched
+     * @param signatures Signatures corresponding to the orders
+     * @return contractIds returns the contract IDs
+    */ 
+    function batchMatchOrder(Order[] calldata orders, bytes[] calldata signatures) external returns(uint[] memory) {
+
+            require(orders.length == signatures.length, "LENGHT_UNMATCHED");
+
+            // Create fixed sized array to store the returns values from each matchOrder inside the loop
+            uint[] memory contractIds = new uint[](orders.length);
+
+            for(uint i; i < orders.length; i++) {
+                contractIds[i] = matchOrder(orders[i], signatures[i]);
+            }
+
+            return contractIds;
+        
+    }
+
+
+
+
 
     /** 
       * @notice Allows the seller to settle their contract with the buyer 
       * @param order The order related to the contract
-      * @param tokenId The id of the NFT to settle the contract
+      * @param tokenId The ID of the NFT to settle the contract
     */
     function settleContract(Order calldata order, uint256 tokenId) public nonReentrant {
             
@@ -300,7 +324,23 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
     }
 
 
-    
+    /** 
+      * @notice Allows the seller to settle several contracts
+      * @param orders The orders from which the contracts would be setteled
+      * @param tokensIds The token IDs of the NFTs to be transferred
+    */
+    function batchSettleContract(Order[] calldata orders, uint[] calldata tokensIds) external {
+
+        require(orders.length == tokensIds.length, "UNMATCHED_SIZE");
+        
+        for(uint i; i < orders.length; i++) {
+            settleContract(orders[i], tokensIds[i]);
+        }
+    }
+
+
+
+
     /**
       * @notice Allows the buyer of the NFT to either claim their NFT or, if the contract time has expired, both the seller's deposit and their own deposit.
       * @param order The identifier of the order related to the NFT contract
@@ -341,16 +381,19 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
     }
 
 
-    /**
-        Function def: Buy Position: Any one can create an off-chain sellorder to sell their position in the contract 
-        Function params: 
-        Sanity checks:  
-        State changes: 
-        Funds transfer: 
-        Event Emits: 
-        NatSpec:
-    */  
 
+    /**
+      * @notice Allow users to claim multiple NFTs
+      * @param orders The orders from which the NFTs should be claimed
+    */
+    function batchClaimNFTs(Order[] calldata orders) external {
+        
+        for(uint i; i < orders.length; i++) {
+            claimNFT(orders[i]);
+        }
+    }
+
+    
 
     /**
       * @notice Executes the purchase of a specified sell order position.
@@ -424,7 +467,7 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
     */
     function isValidSellOrder(SellOrder calldata sellOrder, bytes32 sellOrderHash, Order memory order, bytes32 orderHash, bytes calldata signature) public view {
         
-        require(isValidSignature(sellOrder.maker, sellOrderHash, signature), "INVALID_SIGNATURE");
+        require(isValidSignature(sellOrder.maker, sellOrderHash, signature), "INVALIDsignature");
 
         uint256 contractId = uint256(orderHash);
 
@@ -450,6 +493,10 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
         // Verify if the the payment asset are valid
         require(allowedTokens[sellOrder.paymentAsset], "INVALID_PAYMENTASSET");
 
+        // Check if the sell order is not valid
+        require(!canceledSellOrders[sellOrderHash], "ORDER_CANCELED");
+
+
         // NOTE
         /// Check that the nonce of the sellOrder is valid
         // This check ensure that the order being submitted hasn't been invalidated by the maker 
@@ -460,8 +507,8 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
         // replays attacks.
         // *** Here the order creator(msg.sender) is saying that all only the order that has nonce greater than 10
         // is valid. and the order I created from 1 to 9 are Invalid.
-       
-        // TODO add If the order is canceled or not 
+
+        
     }
 
 
@@ -510,26 +557,30 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
         return _hashTypedDataV4(hashedOrder);
     }
 
-    // TODO : cancelOrder[X], cancelSellOrder
 
-    /**
-        Function definition: Cancel Order
-        Function param : Get the order(Order order) [x]
-        State changes: 1- hash the order, create mapping to cancel the order (Hashorder to bool);
-        
-        Sanity checkes: 
-        Check that the caller of the order is the maker. [x]
-        Check if the order it wasn't already matched to prevent the order maker to cancel an order.[x]
 
-        Funds transfer: NONE
-        Event Emits: X
-        NatSpec: X
+    /**     
+      * @notice Allow a sell order maker to disable an off chain signed order
+      * @param sellOrder The sell Order to disable
     */
+    function cancelSellOrder(SellOrder calldata sellOrder) external {
 
-    /**
-        Cancel Order; 
-    
-    */
+            bytes32 hashedSellOrder = hashSellOrder(sellOrder);
+
+            // Check if the caller is the order maker
+            require(sellOrder.maker == msg.sender, "UNAUTHORIZD_SIGNER");
+
+            // Check if an already sellOrder has a maker 
+            require(confirmedSellOrder[hashedSellOrder].maker == address(0), "ALREADY_SOLD");
+
+            require(!canceledSellOrders[hashedSellOrder], "ALREADY_CANCELED");
+            
+            canceledSellOrders[hashedSellOrder] = true;
+
+            emit SellOrderCanceled(sellOrder, hashedSellOrder);
+    }
+
+
 
     /** 
       * @notice Allows the order maker to disable an off chain signed order.
@@ -538,6 +589,8 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
     function cancelOrder(Order calldata order) external {
 
         bytes32 hashedOrder = hashOrder(order);
+
+        require(order.maker == msg.sender, "UNAUTHORIZD_SIGNER");
         
         // Check if the order isn't already cancel
         require(!canceledOrders[hashedOrder], "ALREADY_CANCELED");
@@ -551,7 +604,7 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
 
     }
 
-    
+
 
     /** 
       * @notice Transfer the position of an order to another address
@@ -577,7 +630,7 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
             sellers[contractId] = recipient;
         }
 
-        emit PositionTransferred(hashOrder, recipient);
+        emit PositionTransferred(hashedOrder, recipient);
 
     } 
 
@@ -654,6 +707,9 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
 
         // Add more conditions to check the order is valid
         require(order.nonce >= minimumValidNonceOrder[order.maker], "INVALID_NONCE");
+
+         // Check if the order isn't already cancel
+        require(!canceledOrders[_orderHash], "ORDER_CANCELED");
 
 
     }
