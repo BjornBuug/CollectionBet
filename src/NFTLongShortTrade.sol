@@ -39,7 +39,8 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
     event ClosedPosition(bytes32 sellOrderHash, SellOrder sellOrder, bytes32 hashedOrder, Order order , address indexed buyer);
     event UpdateMinimumValidNonce(address indexed orderMaker, uint256 minimumNonceOrder);
     event UpdateMinimumValidNonceSell(address indexed orderMaker, uint256 minimumNonceOrderSell);
-
+    event PositionTransferred(bytes32 hashedOrder, address recipient);
+    event OrderCanceled(Order order, bytes32 hashedOrder);
 
     //***************************** ERROR ************/
     error ERR_NOT_ENOUGH_BALANCE();
@@ -149,6 +150,12 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
 
     /// @notice Keep track of the reclaimed NFT from the seller
     mapping (uint256 => bool) public reclaimedNFT;
+
+    /// @notice Keep track cancel Order
+    mapping (bytes32 => bool) public canceledOrders;
+
+    /// @notice Keep track cancel sell Order
+    mapping (bytes32 => bool) public canceledSellOrders;
 
     // @notice the addresses of an allowed NFT collection 
     mapping (address => bool) public allowedCollection;
@@ -503,6 +510,77 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
         return _hashTypedDataV4(hashedOrder);
     }
 
+    // TODO : cancelOrder[X], cancelSellOrder
+
+    /**
+        Function definition: Cancel Order
+        Function param : Get the order(Order order) [x]
+        State changes: 1- hash the order, create mapping to cancel the order (Hashorder to bool);
+        
+        Sanity checkes: 
+        Check that the caller of the order is the maker. [x]
+        Check if the order it wasn't already matched to prevent the order maker to cancel an order.[x]
+
+        Funds transfer: NONE
+        Event Emits: X
+        NatSpec: X
+    */
+
+    /**
+        Cancel Order; 
+    
+    */
+
+    /** 
+      * @notice Allows the order maker to disable an off chain signed order.
+      * @param order The order to disable
+    */ 
+    function cancelOrder(Order calldata order) external {
+
+        bytes32 hashedOrder = hashOrder(order);
+        
+        // Check if the order isn't already cancel
+        require(!canceledOrders[hashedOrder], "ALREADY_CANCELED");
+
+        // Check if the order isn't already matched before canceling it
+        require(matchedOrders[uint256(hashedOrder)].maker == address(0), "ALREADY_MATCHED");
+
+        canceledOrders[hashedOrder] = true;
+
+        emit OrderCanceled(order, hashedOrder);
+
+    }
+
+    
+
+    /** 
+      * @notice Transfer the position of an order to another address
+      * @param order The order from which the position will be transfered
+      * @param recipient The address to receive the transferred position
+    */  
+    function transferPosition(Order calldata order, address recipient) public {
+        
+        require(recipient != address(0), "INVALID_ADDRESS");
+
+        bytes32 hashedOrder = hashOrder(order);
+
+        uint256 contractId = uint256(hashedOrder);
+
+        if(order.isBull) { 
+            // Check if the caller is a the buyer 
+            require(buyers[contractId] == msg.sender, "UNAUTHORIZED_CALLER");
+            buyers[contractId] = recipient;
+
+        } else {
+            // Check if the caller is the seller
+            require(sellers[contractId] == msg.sender, "UNAUTHORIZED_CALLER");
+            sellers[contractId] = recipient;
+        }
+
+        emit PositionTransferred(hashOrder, recipient);
+
+    } 
+
 
 
     /** 
@@ -576,7 +654,6 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
 
         // Add more conditions to check the order is valid
         require(order.nonce >= minimumValidNonceOrder[order.maker], "INVALID_NONCE");
-
 
 
     }
