@@ -24,8 +24,6 @@ import {WETH} from "solmate/src/tokens/WETH.sol";
     */
 
 
-
-
 contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, ReentrancyGuard, ERC721TokenReceiver {
     
     using SafeERC20 for IERC20;
@@ -37,16 +35,20 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
     event UpdateFee(uint16 fee);
     event ContractSetteled(Order indexed order, bytes32 hashOrder, uint tokenId);
     event ClaimedNFT(bytes32 hashOrder, Order order);
-    event ClosedPosition(bytes32 sellOrderHash, SellOrder sellOrder, bytes32 hashedOrder, Order order , address indexed buyer);
+    event SoldPosition(bytes32 sellOrderHash, SellOrder sellOrder, bytes32 hashedOrder, Order order , address indexed buyer);
     event UpdateMinimumValidNonce(address indexed orderMaker, uint256 minimumNonceOrder);
     event UpdateMinimumValidNonceSell(address indexed orderMaker, uint256 minimumNonceOrderSell);
     event PositionTransferred(bytes32 hashedOrder, address recipient);
     event OrderCanceled(Order order, bytes32 hashedOrder);
     event SellOrderCanceled(SellOrder sellOrder, bytes32 hashedSellOrder);
+    event WithdrawnFees(address recipient, address token, uint256 amountToWithdraw);
 
     //***************************** ERROR ************/
     error ERR_NOT_ENOUGH_BALANCE();
 
+
+
+    //***************************** STATE VARIABLES ************/
     /**
         * @notice Details of the order.
         * @param sellerDeposit Amount deposited by the seller.
@@ -74,8 +76,7 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
     }
 
 
-          // TODO Fix the NatSpec
-     /**
+    /**
         * @notice Details of a sell Order
         * @param orderHash The hashed of the order/contract
         * @param price The minimum amount to buy the position
@@ -120,49 +121,49 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
     keccak256("SellOrder(bytes32 orderHash, uint256 price, uint256 start, uint256 end, uint256 nonce, address paymentAsset, address maker, address[] whitelist, bool isBull)");
 
     
-    /// @notice The address of an sell order maker => to the valid nonce;  
+    /// @notice Maps each seller's address to their minimum valid nonce for sell orders.
     mapping (address => uint256) public minimumValidNonceOrderSell;
 
-    /// @notice The address of an order maker => to a valid nonce;
+    /// @notice Maps each order maker's address to their minimum valid nonce for orders.
     mapping(address => uint256) public minimumValidNonceOrder;
 
-    /// @notice the amount of fee withdrawble by the owner
+    /// @notice Maps ERC20 addresses to the amount of fees that can be withdrawn by the Owner.
     mapping (address => uint256) public withdrawableFees;
 
-    /// @notice Address of the seller for a contract
+    /// @notice Maps a contract identifier to the address of the seller.
     mapping (uint256 => address) public sellers;
 
-    /// @notice Address of the buyer for a contract
+    /// @notice Maps a contract identifier to the address of the buyer.
     mapping (uint256 => address) public buyers;
 
-    /// @notice The address of WETH contract
+    /// @notice The address of the Wrapped Ether (WETH) contract.
     address payable public immutable weth;
 
-    /// @notice To keep track of all matched order
+    /// @notice Maps an order identifier to its corresponding matched order details.
     mapping (uint256 => Order) public matchedOrders;
 
-    /// @notice Keep track of sold sell order.
+   /// @notice Maps a sell order hash to its corresponding confirmed sell order details.
     mapping (bytes32 => SellOrder) public confirmedSellOrder;
 
-    /// @notice Keep track of settled contracts
+    /// @notice Maps a contract identifier to its settlement status.
     mapping (uint256 => bool) public setteledContracts;
 
-    /// @notice Keep track of the NFTs the contract holds
+    /// @notice Maps a contract identifier(contractId) to the tokenId.
     mapping (uint256 => uint256) public claimableTokenId;
 
-    /// @notice Keep track of the reclaimed NFT from the seller
+    /// @notice Tracks whether an NFT has been reclaimed from the seller, mapped by contract ID.
     mapping (uint256 => bool) public reclaimedNFT;
 
-    /// @notice Keep track cancel Order
+    /// @notice Tracks the cancellation status of orders, mapped by order hash.
     mapping (bytes32 => bool) public canceledOrders;
 
-    /// @notice Keep track cancel sell Order
+    /// @notice Tracks the cancellation status of sell orders, mapped by sell order hash.
     mapping (bytes32 => bool) public canceledSellOrders;
 
-    // @notice the addresses of an allowed NFT collection 
+    // @notice the addresses of an allowed NFT collection set by the owner. 
     mapping (address => bool) public allowedCollection;
 
-    // @notice the addresses of an allowed ERC20 tokens
+    // @notice the addresses of an allowed ERC20 tokens set by the onwer.
     mapping (address => bool) public allowedTokens;
 
     
@@ -174,7 +175,6 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
         weth = payable(_weth);
         setFee(_fee);
     }
-
 
 
     /**
@@ -260,6 +260,7 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
     }
 
 
+
     /**
      * @notice Allow users to batch multiple orders
      * @param orders Orders to be batched
@@ -268,7 +269,7 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
     */ 
     function batchMatchOrder(Order[] calldata orders, bytes[] calldata signatures) external returns(uint[] memory) {
 
-            require(orders.length == signatures.length, "LENGHT_UNMATCHED");
+            require(orders.length == signatures.length, "UNMATCHED_LENGHT");
 
             // Create fixed sized array to store the returns values from each matchOrder inside the loop
             uint[] memory contractIds = new uint[](orders.length);
@@ -278,10 +279,7 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
             }
 
             return contractIds;
-        
     }
-
-
 
 
 
@@ -324,6 +322,7 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
     }
 
 
+
     /** 
       * @notice Allows the seller to settle several contracts
       * @param orders The orders from which the contracts would be setteled
@@ -338,12 +337,10 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
         }
     }
 
-
-
-
+    
     /**
-      * @notice Allows the buyer of the NFT to either claim their NFT or, if the contract time has expired, both the seller's deposit and their own deposit.
-      * @param order The identifier of the order related to the NFT contract
+      * @notice Enables the buyer to claim their NFT from a specific order. If the contract's time has expired, the buyer can also claim both their own deposit and the seller's deposit.
+      * @param order The Order struct containing details of the NFT contract to claim the NFT from.
     */
     function claimNFT(Order calldata order) public nonReentrant {
 
@@ -450,9 +447,9 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
             IERC20(paymentAsset).safeTransferFrom(msg.sender, sellOrderMaker, buyerPrice);
         } else { revert ERR_NOT_ENOUGH_BALANCE(); }
 
-        return sellOrderId;
+        emit SoldPosition(sellOrderHash, sellOrder, orderHash, order, msg.sender);
 
-        emit ClosedPosition(sellOrderHash, sellOrder, orderHash, order, msg.sender);
+        return sellOrderId;
     } 
 
     
@@ -496,7 +493,7 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
         // Check if the sell order is not valid
         require(!canceledSellOrders[sellOrderHash], "ORDER_CANCELED");
 
-
+        
         // NOTE
         /// Check that the nonce of the sellOrder is valid
         // This check ensure that the order being submitted hasn't been invalidated by the maker 
@@ -510,7 +507,6 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
 
         
     }
-
 
 
     /**
@@ -529,39 +525,10 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
     }
 
 
-    /** 
-      * @notice Hashed the order according to EIP712(data hashing and signing)
-      * @param order the struct order to hash
-      * @return hashedOrder EIP721 hash of the order
-    */  
-    function hashOrder(Order calldata order) public view returns(bytes32) {
-        // abi.encode package all the input data with different types(string, uint) into bytes format then
-        // hashing using keccak256 to get a unique hash
-        bytes32 hashedOrder = keccak256(
-                abi.encode(
-                    ORDER_TYPE_HASH,
-                    order.sellerDeposit,
-                    order.buyerCollateral,
-                    order.validity,
-                    order.expiry,
-                    order.nonce,
-                    order.fee,
-                    order.maker,
-                    order.paymentAsset,
-                    order.collection,
-                    order.isBull
-                )
-            );
-        
-        // function returns the hash of the fully encoded EIP712 message for this domain
-        return _hashTypedDataV4(hashedOrder);
-    }
-
-
 
     /**     
-      * @notice Allow a sell order maker to disable an off chain signed order
-      * @param sellOrder The sell Order to disable
+      * @notice Allows the maker of a sell order to cancel it, preventing any further actions on the sell order.
+      * @param sellOrder The off-chain signed sell order to be canceled.
     */
     function cancelSellOrder(SellOrder calldata sellOrder) external {
 
@@ -583,9 +550,9 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
 
 
     /** 
-      * @notice Allows the order maker to disable an off chain signed order.
-      * @param order The order to disable
-    */ 
+      * @notice Allows the maker of an order to cancel it, preventing any further action on the order.
+      * @param order The off-chain signed order to be canceled.
+    */
     function cancelOrder(Order calldata order) external {
 
         bytes32 hashedOrder = hashOrder(order);
@@ -603,13 +570,13 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
         emit OrderCanceled(order, hashedOrder);
 
     }
+    
 
-
-
+    
     /** 
-      * @notice Transfer the position of an order to another address
-      * @param order The order from which the position will be transfered
-      * @param recipient The address to receive the transferred position
+      * @notice Transfers the position associated with a specific order to another address.
+      * @param order The order whose position is being transferred.
+      * @param recipient The address that will receive the transferred position.
     */  
     function transferPosition(Order calldata order, address recipient) public {
         
@@ -664,23 +631,43 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
     }
 
 
-
-    /**
-     * @notice Sets new fee rate only by the owner
-     * @param _fee The value of the new fee rate
-    */
-    function setFee(uint16 _fee) public onlyOwner {
-        require(_fee < 50, "Fee cannot be more than 5%");
-        fee = _fee;
-        emit UpdateFee(_fee);
+    
+    /** 
+      * @notice Hashed the order according to EIP712(data hashing and signing)
+      * @param order the struct order to hash
+      * @return hashedOrder EIP721 hash of the order
+    */  
+    function hashOrder(Order calldata order) public view returns(bytes32) {
+        // abi.encode package all the input data with different types(string, uint) into bytes format then
+        // hashing using keccak256 to get a unique hash
+        bytes32 hashedOrder = keccak256(
+                abi.encode(
+                    ORDER_TYPE_HASH,
+                    order.sellerDeposit,
+                    order.buyerCollateral,
+                    order.validity,
+                    order.expiry,
+                    order.nonce,
+                    order.fee,
+                    order.maker,
+                    order.paymentAsset,
+                    order.collection,
+                    order.isBull
+                )
+            );
+        
+        // function returns the hash of the fully encoded EIP712 message for this domain
+        return _hashTypedDataV4(hashedOrder);
     }
 
-    
+
+
 
     /**
-        * @notice Verify if an order is valid 
-        * @param order the order to verify
-        * @param _signature The signature corresponding to the EIP712 hashed order
+        * @notice Verifies if an order is valid by checking its EIP712 signature.
+        * @param order The order data structure to verify.
+        * @param _orderHash The hash of the order, computed according to EIP712 standards.
+        * @param _signature The digital signature corresponding to the EIP712 hashed order.
     */
     function isValidOrder(Order memory order, bytes32 _orderHash , bytes calldata _signature) public view {
         
@@ -712,6 +699,27 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
         require(!canceledOrders[_orderHash], "ORDER_CANCELED");
 
 
+    }
+
+
+
+    /**
+      * @notice Allows the contract owner to withdraw accumulated fees in a specified ERC20 token.
+      * @param token The address of the ERC20 token in which the fees are to be withdrawn.
+    */
+    function withdrawFees(address token, address recipient) external onlyOwner {
+        
+        require(allowedTokens[token], "TOKEN_NOT_ALLOWED");
+        require(token != address(0), "INVALID_ADDRESS");
+        require(recipient != address(0), "INVALID_ADDRESS");
+
+        uint256 amountToWithdraw = withdrawableFees[token];
+
+        require(amountToWithdraw > 0, "INVALID_BALANCE");
+        withdrawableFees[token] = 0;
+        IERC20(token).safeTransferFrom(address(this), msg.sender, amountToWithdraw);
+        
+        emit WithdrawnFees(recipient, token, amountToWithdraw);
     }
 
 
@@ -770,7 +778,28 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
             emit AllowTokens(_token, _allowed);
     }
 
+
+    /**
+     * @notice Sets new fee rate only by the owner
+     * @param _fee The value of the new fee rate
+    */
+    function setFee(uint16 _fee) public onlyOwner {
+        require(_fee < 50, "Fee cannot be more than 5%");
+        fee = _fee;
+        emit UpdateFee(_fee);
+    }
+
+
+
     
+    /**
+     * @notice Return the domain separator of this contract used to determine which EIP712 order hash
+     * @return The domain separator
+     */
+    function domainSeparatorV4() public view returns(bytes32) {
+        return _domainSeparatorV4();
+    }
+
 
     /**
         * @notice Verify if the signature of an order hash was made by `_signer`
@@ -783,8 +812,7 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
         // ECDSA.recover returns an Ethereum Signed Message created from a hash
           return ECDSA.recover(_orderHash, _signature) == _signer;
     }
-
     
 
-
+    
 }

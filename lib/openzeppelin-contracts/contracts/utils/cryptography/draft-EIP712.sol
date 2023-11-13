@@ -64,6 +64,7 @@ abstract contract EIP712 {
         _TYPE_HASH = typeHash;
     }
 
+
     /**
      * @dev Returns the domain separator for the current chain.
      */
@@ -75,6 +76,7 @@ abstract contract EIP712 {
         }
     }
 
+
     function _buildDomainSeparator(
         bytes32 typeHash,
         bytes32 nameHash,
@@ -82,6 +84,7 @@ abstract contract EIP712 {
     ) private view returns (bytes32) {
         return keccak256(abi.encode(typeHash, nameHash, versionHash, block.chainid, address(this)));
     }
+
 
     /**
      * @dev Given an already https://eips.ethereum.org/EIPS/eip-712#definition-of-hashstruct[hashed struct], this
