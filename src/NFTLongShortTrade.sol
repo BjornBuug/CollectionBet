@@ -339,7 +339,8 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
 
     
     /**
-      * @notice Enables the buyer to claim their NFT from a specific order. If the contract's time has expired, the buyer can also claim both their own deposit and the seller's deposit.
+      * @notice Enables the buyer to claim their NFT from a specific order.
+      * If the contract's time has expired, the buyer can also claim both their own deposit and the seller's deposit.
       * @param order The Order struct containing details of the NFT contract to claim the NFT from.
     */
     function claimNFT(Order calldata order) public nonReentrant {
@@ -377,7 +378,7 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
         emit ClaimedNFT(hashedOrder, order);
     }
 
-
+    
 
     /**
       * @notice Allow users to claim multiple NFTs
