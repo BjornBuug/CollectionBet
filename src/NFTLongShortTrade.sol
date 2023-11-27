@@ -177,9 +177,23 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
     }
 
 
+
+    /** test unit scenarios
+        Happy Path:
+        1. if the seller have enough balance to match the order;
+        2. if the the protocol admin can withdraw fees once the order is matched
+        3. if the seller and buyer are saved correctly
+        4. if matchedorder are saved correctly
+        5. if the protocol contract received both maker and taker funds once transffered.
+        6. if the event was emmited
+    
+     */
+
+
+
     /**
      * @notice Match the order with the maker
-     * @param order the order created by the maker
+     * @param order the order created by the maker // Bull
      * @param signature the hashed signature of the order
      * @return contractId returns the contract id
     */
@@ -239,7 +253,7 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
             // Retrieve payment from the the order maker
             uint256 makerTokensBalance = IERC20(tokenPayment).balanceOf(order.maker);
 
-            /// @audit note What if the maker want to deposit their eth 
+            /// @audit The dev assumes that the maker will deposit only weth (check it out later)
             if(makerPrice > 0 && makerTokensBalance >= makerPrice) {
                 IERC20(tokenPayment).safeTransferFrom(order.maker, address(this), makerPrice);
             } else  { revert ERR_NOT_ENOUGH_BALANCE(); }

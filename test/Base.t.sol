@@ -23,7 +23,7 @@ abstract contract Base is Test, ERC721TokenReceiver {
     uint internal sellerPrivateKey;
     address internal seller;
 
-    uint internal fee = 20;
+    uint16 internal fee = 20;
 
 
 
@@ -34,11 +34,11 @@ abstract contract Base is Test, ERC721TokenReceiver {
 
         nftLongShortTrade = new NFTLongShortTrade(fee, address(weth));
 
-        buyerPrivateKey = uint(0X12345);
+        buyerPrivateKey = uint(0x12345);
         buyer = vm.addr(buyerPrivateKey);
         vm.label(buyer, "Buyer");
 
-        sellerPrivateKey = uint(0X6789);
+        sellerPrivateKey = uint(0x6789);
         seller = vm.addr(sellerPrivateKey);
         vm.label(seller, "Seller");
 
@@ -46,29 +46,46 @@ abstract contract Base is Test, ERC721TokenReceiver {
 
     // @dev "r" and "s"  big numbers represented by byte32 and they are the output of the cryptographic algorithm when signing a message.
     // @dev "v" known as a recovery id. helps indentify the correct signer's public key.
-    function signOrder(uint privateKey, nftLongShortTrade.Order memory order) internal returns(bytes memory) {
-            bytes32 hashedOrder =  nftLongShortTrade.hashOrder(order);
-            (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKey, hashedOrder);
-            return abi.encodePacked(v,r,s);
+    function signOrder(uint privateKey, NFTLongShortTrade.Order memory order) internal returns(bytes memory) {
+            bytes32 orderHash =  nftLongShortTrade.hashOrder(order);
+            (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKey, orderHash);
+            return abi.encodePacked(r,s,v);
     }
 
 
     // @dev "r" and "s"  big numbers represented by byte32 and they are the output of the cryptographic algorithm when signing a message.
     // @dev "v" known as a recovery id. helps indentify the correct signer's public key.
-    function signSellOrder(uint privateKey, nftLongShortTrade.SellOrder memory sellOrder) internal returns(bytes memory) {
+    function signSellOrder(uint privateKey, NFTLongShortTrade.SellOrder memory sellOrder) internal returns(bytes memory) {
             bytes32 hashedSellOrder =  nftLongShortTrade.hashSellOrder(sellOrder);
             (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKey, hashedSellOrder);
-            return abi.encodePacked(v,r,s);
+            return abi.encodePacked(r,s,v);
     }
 
     function signOrderHash(uint privateKey, bytes32 orderHash) internal returns (bytes memory) {
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKey, orderHash);
-        return abi.encodePacked(r, s, v);
+        return abi.encodePacked(r,s,v);
     }
+
 
     function signHash(uint privateKey, bytes32 _hash) internal returns (bytes memory) {
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKey, _hash);
-        return abi.encodePacked(r, s, v);
+        return abi.encodePacked(r,s,v);
+    }
+
+    
+    function defaultOrder() internal view returns(NFTLongShortTrade.Order memory) {
+        return NFTLongShortTrade.Order({
+            sellerDeposit: 100 ether,
+            buyerCollateral: 50 ether,
+            validity: block.timestamp + 1 hours,
+            expiry: block.timestamp + 3 days,
+            nonce: 10,
+            fee: fee,
+            maker: buyer,
+            paymentAsset: address(weth),
+            collection: address(mockNFT),
+            isBull: true
+        });
     }
 
 
