@@ -54,7 +54,7 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
         * @param sellerDeposit Amount deposited by the seller.
         * @param buyerCollateral Amount deposited by the buyer.
         * @param validity Timestamp representing the validity of the order.
-        * @param expiry Timestamp representing the expiry of the order.
+        * @param expiry Timestamp representing the expiry of the order once is matched.
         * @param nonce Number used to verify the order's validity and prevent order reuse or duplication.
         * @param fee Fees applied to the order.
         * @param maker Address of the user creating the order.
@@ -379,6 +379,7 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
 
             //Transfer the NFT from address(this) to the buyer
             IERC721(order.collection).safeTransferFrom(address(this), buyer , tokenId);
+
         } else {
 
         // Check if the contract is expired, if it's means that the seller didn't setlle the contract within the validity time
@@ -587,7 +588,6 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
     }
     
 
-    
     /** 
       * @notice Transfers the position associated with a specific order to another address.
       * @param order The order whose position is being transferred.
@@ -690,7 +690,7 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
         require(isValidSignature(order.maker, _orderHash, _signature), "INVALID_SIGNATURE");
 
         // Verify if the order's timestamp is greater than validity
-        require(block.timestamp >= order.validity, "EXPIRED_ORDER");
+        require(block.timestamp < order.validity, "EXPIRED_ORDER");
 
         // Verify if the fee set for an order are valid
         require(order.fee >= fee, "INVALID_FEE");

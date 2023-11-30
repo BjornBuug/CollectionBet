@@ -2,6 +2,8 @@
 pragma solidity >=0.8.4;
 
 import "forge-std/Test.sol";
+import "forge-std/console2.sol";
+
 
 import {MockERC20} from "../mocks/mockERC20.sol";
 import {MockERC721} from "../mocks/mockERC721.sol";
