@@ -2,7 +2,7 @@
 pragma solidity >=0.8.4;
 
 import "forge-std/Test.sol";
-import "forge-std/console2.sol";
+
 
 
 import {MockERC20} from "../mocks/mockERC20.sol";
@@ -25,16 +25,28 @@ abstract contract Base is Test, ERC721TokenReceiver {
     uint internal sellerPrivateKey;
     address internal seller;
 
+    address internal admin;
+    
+
+    // 20 represets 2% in decimals we divide it by 100
     uint16 internal fee = 20;
 
 
 
     constructor() {
+
+        uint adminPrivateKey = uint(0x5555);
+        admin = vm.addr(adminPrivateKey);
+        vm.label(admin, "Admin");
+
+        vm.startPrank(admin);
         USDC = new MockERC20("USDC token", "USDC", 6);
         mockNFT = new MockERC721("mockNFT collection", "MNC");
         weth = new WETH();
 
         nftLongShortTrade = new NFTLongShortTrade(fee, address(weth));
+       
+         vm.stopPrank();
 
         buyerPrivateKey = uint(0x12345);
         buyer = vm.addr(buyerPrivateKey);
@@ -44,6 +56,7 @@ abstract contract Base is Test, ERC721TokenReceiver {
         seller = vm.addr(sellerPrivateKey);
         vm.label(seller, "Seller");
 
+       
     }
 
     // @dev "r" and "s"  big numbers represented by byte32 and they are the output of the cryptographic algorithm when signing a message.

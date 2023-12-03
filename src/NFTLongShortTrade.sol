@@ -732,7 +732,7 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
 
         require(amountToWithdraw > 0, "INVALID_BALANCE");
         withdrawableFees[token] = 0;
-        IERC20(token).safeTransferFrom(address(this), msg.sender, amountToWithdraw);
+        IERC20(token).safeTransfer(msg.sender, amountToWithdraw);
         
         emit WithdrawnFees(recipient, token, amountToWithdraw);
     }
