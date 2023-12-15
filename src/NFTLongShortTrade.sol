@@ -254,13 +254,18 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
             uint256 makerTokensBalance = IERC20(tokenPayment).balanceOf(order.maker);
 
             /// @audit The dev assumes that the maker will deposit only weth (check it out later)
+            // Retrieve the payment if the the maker 
+
+
             if(makerPrice > 0 && makerTokensBalance >= makerPrice) {
                 IERC20(tokenPayment).safeTransferFrom(order.maker, address(this), makerPrice);
             } else  { revert ERR_NOT_ENOUGH_BALANCE(); }
-             
-            // Retrieve payment from the taker
+            
+            
+            // Retrieve payment from the  ordertaker
             uint256 takerTokensBalance = IERC20(tokenPayment).balanceOf(msg.sender);
 
+            // If the user tries to pay with another asset than eth when the tokenPayment is ET
             if (takerPrice == msg.value) {
                 require(tokenPayment == weth, "INCOMPATIBLE_PAYMENT_ASSET");
                 WETH(weth).deposit{value : msg.value}();

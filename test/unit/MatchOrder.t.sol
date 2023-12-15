@@ -33,13 +33,23 @@ contract TestMatchOrder is Base {
         deal(address(weth), buyer, 1000 ether);
         deal(address(weth), seller, 500 ether);
 
+        // Asign Native eth to the seller 
+        deal(address(seller), 1000 ether);
+        deal(address(USDC), buyer,  1000 ether);
+        deal(address(USDC), seller , 500 ether);
+
         // Approve the protocol to spend max of tokens on the buyer and seller behalf
         vm.startPrank(buyer);
         weth.approve(address(nftLongShortTrade), type(uint).max);
+        USDC.approve(address(nftLongShortTrade), type(uint).max);
         
         vm.startPrank(seller);
         weth.approve(address(nftLongShortTrade), type(uint).max);
-    }
+        USDC.approve(address(nftLongShortTrade), type(uint).max);
+
+         vm.label(address(weth), "WETH Contract");
+         vm.label(address(USDC), "USDC Contract");
+    } 
 
 
     // 1. Test if the seller has enough balance to match the order?
@@ -70,39 +80,48 @@ contract TestMatchOrder is Base {
     }
 
 
-    // 1. Test if the seller has enough balance to match the order?
-    function test_OrderMatchedWhenTokensNotEther() public {
+    // 1. Test that ETH "cannot be send" if WETH is not tokens payment for specific order.
+    function test_CannotSendETHIfAllowedTokenIsNotWETH() public {
         
-        // Get the order 
+        // Get the order
         NFTLongShortTrade.Order memory order = defaultOrder();
+
+        order.paymentAsset = address(USDC);
+
+        console2.log("current payment asset", order.paymentAsset);
 
         // Sign the order by the bull/maker to get the signature
         bytes memory signature = signOrder(buyerPrivateKey, order);
 
-        order.paymentAsset = address(USDC);
-
+        // Se the New token for payment is USDC to test if a seller can match an order by send/pay ETH 
         vm.startPrank(admin);
             nftLongShortTrade.setAllowedTokens(address(USDC), true);
         vm.stopPrank();
 
+
         vm.startPrank(seller);
         
-        deal(address(USDC), seller , 1000 ether);
+        uint fee = nftLongShortTrade.fee();
 
-        uint takerPrice = (order.sellerDeposit) + order.sellerDeposit * fee / 1000;
+        uint takerPrice = order.sellerDeposit * fee / 1000 + order.sellerDeposit; 
+        
+        console2.log("seller USDC balance", USDC.balanceOf(address(seller)));
+
+        emit log_named_decimal_uint("seller USDC balance", USDC.balanceOf(address(seller)) , 18);
+        emit log_named_decimal_uint("Taker price", takerPrice , 18);
+
+        // console2.log("Taker price", takerPrice);
 
         // potential Invariant: the contract must only accept ETH when sending payment directly 
         // to the contract to match order
         vm.expectRevert("INCOMPATIBLE_PAYMENT_ASSET"); // potential Invariant
 
-        // Test if the user can pay directly with another tokens when tokens to pay with is ETH/WETH 
-        nftLongShortTrade.matchOrder{value: takerPrice}(order, signature); 
+        console2.log("current payment asset", order.paymentAsset);
 
+        // Send Ether directly when WETH is not the the right tokens payment for this order.(Should revert)
+        nftLongShortTrade.matchOrder{ value: takerPrice}(order, signature);
+        
     }
-
-
-
-
 
 
 
@@ -146,6 +165,8 @@ contract TestMatchOrder is Base {
         assertEq(savedFees, sellerFee + buyerFee, "Fees weren't saved");
 
     }
+
+
 
 
     function test_OwnerCanWithdrawFees() public {

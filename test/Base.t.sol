@@ -44,6 +44,9 @@ abstract contract Base is Test, ERC721TokenReceiver {
         mockNFT = new MockERC721("mockNFT collection", "MNC");
         weth = new WETH();
 
+        vm.label(address(weth), "WETH Contract");
+        vm.label(address(USDC), "USDC Contract");
+
         nftLongShortTrade = new NFTLongShortTrade(fee, address(weth));
        
          vm.stopPrank();
