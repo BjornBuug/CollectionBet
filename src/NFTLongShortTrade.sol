@@ -255,24 +255,24 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
 
             /// @audit The dev assumes that the maker will deposit only weth (check it out later)
             // Retrieve the payment if the the maker 
-
-
             if(makerPrice > 0 && makerTokensBalance >= makerPrice) {
                 IERC20(tokenPayment).safeTransferFrom(order.maker, address(this), makerPrice);
             } else  { revert ERR_NOT_ENOUGH_BALANCE(); }
             
             
-            // Retrieve payment from the  ordertaker
+            // Retrieve payment from the ordertaker
             uint256 takerTokensBalance = IERC20(tokenPayment).balanceOf(msg.sender);
 
             // If the user tries to pay with another asset than eth when the tokenPayment is ET
-            if (takerPrice == msg.value) {
+            if (msg.value > 0) {
+                require(takerPrice == msg.value, "NOT_ENOUGH_ETH");
                 require(tokenPayment == weth, "INCOMPATIBLE_PAYMENT_ASSET");
-                WETH(weth).deposit{value : msg.value}();
+                WETH(weth).deposit{value : msg.value}(); // the contract deposit ETH to the WETH contract to get WETH
+
             } else if(takerPrice > 0 && takerTokensBalance >= takerPrice) {
                 IERC20(tokenPayment).safeTransferFrom(msg.sender, address(this), takerPrice);
             } else { revert ERR_NOT_ENOUGH_BALANCE(); } 
-        
+
             emit MatchedOrder(hashedOrder, seller, buyer, order);
 
         return contractId;
@@ -389,7 +389,8 @@ contract NFTLongShortTrade is EIP712("NFTLongShortTrade", "1"), Ownable, Reentra
 
         // Check if the contract is expired, if it's means that the seller didn't setlle the contract within the validity time
         // Then we send both the collateral and deposit to the seller.
-
+            // @audit This covers only when the seller deposit WETH to the contract not when the seller deposit ETH native to the contract.
+            // When The seller deposit ETH the contract does guarantee the the sellerDeposit
             require(block.timestamp > order.expiry, "CONTRACT_NOT_EXPIRED");
             uint256 buyerRefund = order.buyerCollateral + order.sellerDeposit;
             IERC20(order.paymentAsset).safeTransfer(buyer, buyerRefund);

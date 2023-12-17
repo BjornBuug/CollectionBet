@@ -20,6 +20,7 @@ contract TestMatchOrder is Base {
     
     event MatchedOrder(bytes32 hashedOrder, address indexed seller, address indexed buyer,
                      NFTLongShortTrade.Order order);
+    event  Deposit(address indexed dst, uint wad);
 
     function setUp() public {
         
@@ -53,7 +54,7 @@ contract TestMatchOrder is Base {
 
 
     // 1. Test if the seller has enough balance to match the order?
-    function testOrderMatchedWithEnoughBalance() public {
+    function testOrderMatchedWithEnoughWETHBal() public {
         
         // Get the order 
         NFTLongShortTrade.Order memory order = defaultOrder();
@@ -67,23 +68,19 @@ contract TestMatchOrder is Base {
         nftLongShortTrade.matchOrder(order, signature);
 
         // calculate fees to pay based on the required deposit
-        uint256 sellerFee = order.sellerDeposit * fee / 1000;
+        uint256 sellerDeposit = order.sellerDeposit * fee / 1000 + order.sellerDeposit;
+        uint256 buyerCollateral = order.buyerCollateral * fee / 1000 + order.buyerCollateral;
 
-        uint256 sellerBal = weth.balanceOf(seller);
-
-
-        emit log_named_decimal_uint("Fees", sellerFee , 18);
-        emit log_named_decimal_uint("Fees", sellerBal , 18);
-
-        assertGe(sellerBal, order.sellerDeposit + sellerFee); 
-
+        uint256 contractBalInWETH = weth.balanceOf(address(nftLongShortTrade));
+        emit log_named_decimal_uint("contract Balan in WETH after matched Order", contractBalInWETH, 18);
+        emit log_named_decimal_uint("seller + buyer must transffered amount to the contract", sellerDeposit + buyerCollateral, 18);
+        assertEq(contractBalInWETH, sellerDeposit + buyerCollateral, "Contract should hold the right amount of WETH");
     }
 
 
     // 1. Test that ETH "cannot be send" if WETH is not tokens payment for specific order.
     function test_CannotSendETHIfAllowedTokenIsNotWETH() public {
         
-        // Get the order
         NFTLongShortTrade.Order memory order = defaultOrder();
 
         order.paymentAsset = address(USDC);
@@ -98,20 +95,12 @@ contract TestMatchOrder is Base {
             nftLongShortTrade.setAllowedTokens(address(USDC), true);
         vm.stopPrank();
 
-
         vm.startPrank(seller);
         
         uint fee = nftLongShortTrade.fee();
 
         uint takerPrice = order.sellerDeposit * fee / 1000 + order.sellerDeposit; 
-        
-        console2.log("seller USDC balance", USDC.balanceOf(address(seller)));
-
-        emit log_named_decimal_uint("seller USDC balance", USDC.balanceOf(address(seller)) , 18);
-        emit log_named_decimal_uint("Taker price", takerPrice , 18);
-
-        // console2.log("Taker price", takerPrice);
-
+  
         // potential Invariant: the contract must only accept ETH when sending payment directly 
         // to the contract to match order
         vm.expectRevert("INCOMPATIBLE_PAYMENT_ASSET"); // potential Invariant
@@ -147,7 +136,7 @@ contract TestMatchOrder is Base {
 
     // if the the protocol admin can withdraw fees once the order is matched
     function test_WithdrawFeesSaved() public {
-        testOrderMatchedWithEnoughBalance();
+        testOrderMatchedWithEnoughWETHBal();
 
         NFTLongShortTrade.Order memory order = defaultOrder();
 
@@ -201,7 +190,7 @@ contract TestMatchOrder is Base {
 
     // if the seller and buyer are saved correctly
     function test_SellerBuyerSaved() public {
-        testOrderMatchedWithEnoughBalance();
+        testOrderMatchedWithEnoughWETHBal();
         
         // Get the order to sign
         NFTLongShortTrade.Order memory order = defaultOrder();
@@ -225,7 +214,7 @@ contract TestMatchOrder is Base {
 
     // if the seller and buyer are saved correctly
     function test_MatchOrderSaved() public {
-        testOrderMatchedWithEnoughBalance();
+        testOrderMatchedWithEnoughWETHBal();
 
         // Get the order to sign
         NFTLongShortTrade.Order memory order = defaultOrder();
@@ -263,6 +252,27 @@ contract TestMatchOrder is Base {
         console2.log("Current Protocol balance", weth.balanceOf(address(nftLongShortTrade)));
         // The contract must hold the sum of sellerDeposit and buyerCollateral after orderMatch
         assertEq(weth.balanceOf(address(nftLongShortTrade)), sellerDeposit + buyerCollateral);
+
+    }
+
+
+    // @audit seller deposit in ETH in not recorded or hold by the contract.(buyer can be harmed if the seller withdraw transfer their balance to another account)... to investgate more
+    function test_WETHDepositWhenETHIsSent() public {
+
+        NFTLongShortTrade.Order memory order = defaultOrder();
+        bytes memory signature = signOrder(buyerPrivateKey, order);
+
+        vm.startPrank(seller);
+
+        uint fee = nftLongShortTrade.fee();
+        uint sellerDepositInEth = order.sellerDeposit * fee / 1000 + order.sellerDeposit;
+        uint256 buyerCollateral = order.buyerCollateral * fee / 1000 + order.buyerCollateral; 
+
+        vm.expectEmit(true, false, false, true);
+        emit Deposit(address(nftLongShortTrade), sellerDepositInEth);
+        nftLongShortTrade.matchOrder{value : sellerDepositInEth}(order, signature);
+
+        assertEq(weth.balanceOf(address(nftLongShortTrade)), sellerDepositInEth + buyerCollateral);
 
     }
 
